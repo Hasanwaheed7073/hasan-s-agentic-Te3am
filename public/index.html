@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>HASAN's TEAM</title>
+  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="ops.css" />
+</head>
+<body>
+  <nav id="rail"></nav>
+  <main id="main"></main>
+  <div id="toasts"></div>
+
+  <dialog id="agent-dialog">
+    <form id="agent-form" method="dialog">
+      <div class="dlg-head">
+        <button type="button" class="link-btn" id="cancel-agent">Cancel</button>
+        <h2 id="agent-dialog-title">Edit profile</h2>
+        <button type="submit" class="link-btn blue">Done</button>
+      </div>
+      <div class="dlg-body">
+        <div class="dlg-avatar">
+          <span class="av xl" id="dlg-av"></span>
+          <div class="row">
+            <label>Emoji<input name="emoji" maxlength="4" /></label>
+            <label>Color<input name="color" type="color" /></label>
+          </div>
+        </div>
+        <label>Name<input name="name" required maxlength="40" /></label>
+        <label>Role<input name="role" required maxlength="200" placeholder="e.g. Prospect qualification" /></label>
+        <label>Bio<input name="bio" maxlength="300" placeholder="One line about this member (optional)" /></label>
+        <div class="sub" id="agent-id" style="margin:-4px 0 10px"></div>
+        <label>Bio · instructions<textarea name="instructions" rows="8" required placeholder="What they own, how they work, what to deliver and where."></textarea></label>
+        <div class="field-label">Action permissions <span class="sub">(enforced at run time; external actions still need a grant or your approval)</span></div>
+        <div id="perm-checks" class="checks"></div>
+        <div class="field-label">Tools</div>
+        <div id="tool-checks"></div>
+        <div class="row">
+          <label class="grow">Worker model<select name="model"></select></label>
+          <label class="grow">Advisor<select name="advisor"></select></label>
+        </div>
+        <label>Fallback model for task retries <span class="sub">(used on the next attempt if the main model is rate-limited or down)</span><select name="fallback_model"></select></label>
+        <label>Effort<select name="effort"></select></label>
+        <p class="hint">Changes apply from this member's next new chat.</p>
+        <button type="button" id="delete-agent" class="danger-link">Remove from team</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="cookie-dialog">
+    <form id="cookie-form" method="dialog">
+      <div class="dlg-head">
+        <button type="button" class="link-btn" id="cancel-cookies">Cancel</button>
+        <h2 id="cookie-title">Import cookies</h2>
+        <button type="submit" class="link-btn blue" id="do-import">Import</button>
+      </div>
+      <div class="dlg-body">
+        <ol class="steps">
+          <li>In your <b>normal Chrome</b> (where you're already signed in), install a cookie export extension such as <b>Cookie-Editor</b>.</li>
+          <li>Open the site, e.g. linkedin.com, click the extension, then <b>Export → JSON</b>. It copies to your clipboard.</li>
+          <li>Paste it below, or choose an exported file, then click <b>Import</b>.</li>
+        </ol>
+        <textarea id="cookie-text" rows="9" placeholder='Paste here: JSON [ { "name": "li_at", … } ], a cookies.txt file, or name=value; name2=value2' spellcheck="false" autocomplete="off"></textarea>
+        <div class="row" style="align-items:center;margin-top:10px">
+          <label class="file-btn btn-grey">Choose file…<input type="file" id="cookie-file" accept=".json,.txt,text/plain,application/json" hidden /></label>
+          <span id="cookie-file-name" class="sub grow"></span>
+        </div>
+        <p class="hint" style="margin-top:12px">🔒 Cookies work like passwords. They go only into the team browser on this PC and are never shown to the AI. Don't share the export file, and delete it after importing.</p>
+        <div id="cookie-result"></div>
+      </div>
+    </form>
+  </dialog>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

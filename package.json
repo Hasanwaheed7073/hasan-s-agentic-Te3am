@@ -1,0 +1,26 @@
+{
+  "name": "yana-team",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node src/server.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.301",
+    "@anthropic-ai/sdk": "^0.134.0",
+    "cron-parser": "^5.10.2",
+    "dotenv": "^18.0.8",
+    "express": "^5.3.0",
+    "node-cron": "^4.6.0",
+    "nodemailer": "^10.1.2",
+    "playwright": "^1.64.1",
+    "ws": "^8.22.0",
+    "zod": "^4.6.7"
+  }
+}
