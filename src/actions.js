@@ -316,10 +316,10 @@ export function saveDraft(ctx, input) {
     : null;
   const origin = ctx.origin ?? "agent";
   db.prepare(`INSERT INTO actions (id, idempotency_key, task_id, run_id, agent_id, action_type, channel, account, destination, prospect_id,
-    subject, content, status, version, supersedes, origin, campaign_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?)`)
+    subject, content, status, version, supersedes, origin, campaign_id, owner_notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?)`)
     .run(id, key, ctx.taskRun?.task.id ?? null, ctx.taskRun?.run.id ?? null, row.agent_id, row.action_type, row.channel, row.account,
       row.destination, input.prospect_id || null, row.subject, row.content, (prev?.version ?? 0) + 1, prev?.id ?? null, origin,
-      ctx.taskRun?.task.campaign_id ?? input.campaign_id ?? null, now(), now());
+      ctx.taskRun?.task.campaign_id ?? input.campaign_id ?? null, input.owner_notes?.trim() || null, now(), now());
   if (prev) db.prepare("UPDATE actions SET status = 'superseded', superseded_by = ?, updated_at = ? WHERE id = ?").run(id, now(), prev.id);
   broadcast({ type: "actions_changed" });
   return { draft_id: id, version: (prev?.version ?? 0) + 1, supersedes: prev?.id ?? null };

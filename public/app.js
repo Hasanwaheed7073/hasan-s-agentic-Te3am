@@ -3,6 +3,7 @@ import {
 } from "./core.js";
 import * as pages from "./pages.js";
 import { renderCampaign } from "./campaign.js";
+import { renderClients, renderClient } from "./clients.js";
 
 // ---------- Rail ----------
 const NAV = [
@@ -10,6 +11,7 @@ const NAV = [
   ["messages", "send", "Messages"],
   ["activity", "pulse", "Activity"],
   ["campaign", "target", "Campaign"],
+  ["clients", "bookmark", "Clients"],
   ["tasks", "tasks", "Tasks"],
   ["workflows", "flow", "Workflows"],
   ["prospects", "users", "Prospects"],
@@ -20,7 +22,7 @@ const NAV = [
   ["browser", "globe", "Browser & accounts", "desk"],
   ["create", "plus", "New member", "desk"],
 ];
-const ACTIVE_FOR = { task: "tasks", wfrun: "workflows", prospect: "prospects", profile: "messages", memory: "settings" };
+const ACTIVE_FOR = { task: "tasks", wfrun: "workflows", prospect: "prospects", client: "clients", profile: "messages", memory: "settings" };
 function renderRail() {
   const badge = { messages: state.unread.size, notifications: state.pendingCount ?? 0 };
   const active = ACTIVE_FOR[state.view.name] ?? state.view.name;
@@ -46,6 +48,8 @@ const ROUTES = {
   home: () => renderHome(),
   profile: (v) => renderProfile(v.agentId),
   campaign: (v) => renderCampaign(v.id),
+  clients: () => renderClients(),
+  client: (v) => renderClient(v.id),
   tasks: () => pages.renderTasks(),
   task: (v) => pages.renderTask(v.id),
   workflows: () => pages.renderWorkflows(),
@@ -536,9 +540,10 @@ async function handleEvent(e) {
   if (e.type === "approvals_changed" || e.type === "actions_changed") { refreshApprovals(); rerenderSoon(["notifications", "task", "prospect", "campaign"]); return; }
   if (e.type === "activity") { pages.pushActivity(e.item); return; }
   if (e.type === "agents_changed") { state.agents = await api("/agents"); return refreshInbox(); }
-  if (e.type === "tasks_changed") { rerenderSoon(["tasks", "task", "home", "wfrun", "profile", "campaign"]); return; }
+  if (e.type === "tasks_changed") { rerenderSoon(["tasks", "task", "home", "wfrun", "profile", "campaign", "client"]); return; }
   if (e.type === "workflows_changed") { rerenderSoon(["workflows", "wfrun", "campaign"]); return; }
   if (e.type === "campaigns_changed") { rerenderSoon(["campaign"]); return; }
+  if (e.type === "jobs_changed") { rerenderSoon(["clients", "client"]); return; }
   if (e.type === "schedules_changed") { rerenderSoon(["schedules"]); return; }
   if (e.type === "grants_changed") { rerenderSoon(["permissions"]); return; }
   if (e.type === "connections_changed") { rerenderSoon(["connections"]); return; }

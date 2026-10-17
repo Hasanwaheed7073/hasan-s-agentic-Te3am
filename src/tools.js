@@ -9,6 +9,7 @@ import * as sched from "./schedules.js";
 import * as prospectsDb from "./prospects.js";
 import * as actionsLayer from "./actions.js";
 import * as campaignsMod from "./campaigns.js";
+import * as jobsDb from "./jobs.js";
 import { WORKSPACE_DIR } from "./paths.js";
 
 // Tool groups you can switch on per team member in the UI.
@@ -20,6 +21,7 @@ export const TOOL_GROUPS = {
   tasks: "Task board: list, read, create tasks (by agent ID)",
   team: "Coordinator: run, retry, reassign, cancel tasks; run workflows",
   prospects: "Prospect database (read and write)",
+  jobs: "Client job search: client profiles, job postings, application packs",
   schedule: "Create recurring schedules",
 };
 
@@ -514,6 +516,77 @@ const CLIENT_TOOLS = [
     },
   },
 
+  // --- client job search ---
+  {
+    group: "jobs",
+    def: { name: "get_client", description: "A client's job-search profile (target titles, locations, work mode, seniority, salary floor, must-haves, exclusions, resume text). Without client_id, lists active clients.", input_schema: obj({ client_id: str("Client ID") }, []) },
+    run(i) {
+      if (!i.client_id) return JSON.stringify(jobsDb.clients.list().filter((c) => c.status === "active").map((c) => ({ client_id: c.id, label: c.label, target_titles: c.target_titles })));
+      const c = jobsDb.clients.get(i.client_id);
+      if (!c) throw new Error("Unknown client_id");
+      return JSON.stringify(jobsDb.clientBrief(c), null, 1);
+    },
+  },
+  {
+    group: "jobs",
+    def: {
+      name: "add_job",
+      description: "Record a real job posting for a client. The system loads the link and reports whether it's live, closed or blocks checks. Duplicates (same link, or same company and title) are not added twice. Never invent postings.",
+      input_schema: obj({
+        client_id: str("Client ID"), title: str("Job title as posted"), company: str("Hiring company"), url: str("Direct link to the posting (company/ATS link preferred)"),
+        location: str("Location as posted"), work_mode: { type: "string", enum: ["remote", "hybrid", "onsite", "unknown"] }, posted_date: str("YYYY-MM-DD if shown"),
+        salary_text: str("Salary range exactly as posted, if posted"), requirements: str("Key requirements from the posting, briefly"), source: str("Where you found it, e.g. LinkedIn Jobs, Greenhouse"),
+      }, ["client_id", "title", "company", "url"]),
+    },
+    async run(i, ctx) {
+      return JSON.stringify(await jobsDb.addJob(i, { agent_id: ctx.agent.id, task_id: ctx.taskRun?.task.id ?? null }));
+    },
+  },
+  {
+    group: "jobs",
+    def: {
+      name: "score_job",
+      description: "Score a recorded job against the client's profile and decide: shortlisted (a real fit) or skipped. Reasons must point to the profile and the posting; list honest gaps.",
+      input_schema: obj({
+        job_id: str("Job ID"), fit_score: { type: "number", description: "0-100" }, decision: { type: "string", enum: ["shortlisted", "skipped"] },
+        fit_reasons: { type: "array", items: { type: "string" } }, gaps: { type: "array", items: { type: "string" } },
+      }, ["job_id", "fit_score", "decision"]),
+    },
+    run(i, ctx) {
+      const j = jobsDb.scoreJob(i.job_id, i, { agent_id: ctx.agent.id });
+      return `${j.title} at ${j.company}: ${j.status} (${j.fit_score}/100).`;
+    },
+  },
+  {
+    group: "jobs",
+    def: {
+      name: "find_jobs",
+      description: "List jobs already recorded for a client (check before adding, to avoid repeats).",
+      input_schema: obj({ client_id: str("Client ID"), status: { type: "string", enum: jobsDb.JOB_STATUSES } }, ["client_id"]),
+    },
+    run(i) {
+      return JSON.stringify(jobsDb.jobs.list({ client_id: i.client_id, status: i.status, limit: 80 }).map((j) => ({
+        job_id: j.id, title: j.title, company: j.company, url: j.url, status: j.status, link_state: j.link_state, fit_score: j.fit_score, has_application: Boolean(j.application),
+      })), null, 1);
+    },
+  },
+  {
+    group: "jobs",
+    perm: "drafting",
+    def: {
+      name: "save_application",
+      description: "Save an application pack for a shortlisted job: cover note, resume tweaks and screening answers, using only experience the client's resume shows. Nothing is submitted.",
+      input_schema: obj({
+        job_id: str("Job ID"), cover_note: str("Under 180 words; names the company; no placeholders"),
+        resume_tweaks: { type: "array", items: { type: "string" }, description: "Bullets to emphasize or reword" },
+        screening_answers: str("Answers to the posting's questions, if any"), owner_notes: str("Gaps or doubts for the owner"),
+      }, ["job_id", "cover_note"]),
+    },
+    run(i, ctx) {
+      return JSON.stringify(jobsDb.saveApplication(i.job_id, i, { agent_id: ctx.agent.id }));
+    },
+  },
+
   // --- drafting and external actions (permissions enforced in actions.js) ---
   {
     group: null,
@@ -525,6 +598,7 @@ const CLIENT_TOOLS = [
         content: str("Exact text"), subject: str("Email subject if any"), channel: { type: "string", enum: ["email", "linkedin", "reddit", "other"] },
         destination: str("Intended recipient/profile/thread if known"), prospect_id: str("Prospect ID if for a prospect"),
         intended_action: { type: "string", enum: ["public_post", "private_message", "email_send", "external_update"] },
+        owner_notes: str("Doubts or things the owner should confirm before approving (not part of the message)"),
       }, ["content"]),
     },
     run: (i, ctx) => JSON.stringify(actionsLayer.saveDraft(ctx, i)),
@@ -554,18 +628,20 @@ const CLIENT_TOOLS = [
       input_schema: obj({
         status: { type: "string", enum: ["completed", "no_results"] }, summary: str("What you did and found, in 2-6 sentences"),
         prospect_ids: { type: "array", items: { type: "string" } }, qualified_prospect_ids: { type: "array", items: { type: "string" } },
-        draft_ids: { type: "array", items: { type: "string" } }, data: { type: "object", description: "Any other structured result" },
+        draft_ids: { type: "array", items: { type: "string" } }, job_ids: { type: "array", items: { type: "string" }, description: "Job IDs (client job search)" },
+        data: { type: "object", description: "Any other structured result" },
         files: { type: "array", items: { type: "string" } },
       }, ["status", "summary"]),
     },
     run(i, ctx) {
       need(i, "status", "summary");
-      const listFields = ["prospect_ids", "qualified_prospect_ids", "draft_ids"];
+      const listFields = ["prospect_ids", "qualified_prospect_ids", "draft_ids", "job_ids"];
+      const exists = { draft_ids: (id) => actionsLayer.actions.get(id), job_ids: (id) => jobsDb.jobs.get(id) };
       for (const f of listFields) {
         if (i[f] === "" || i[f] === null || i[f] === undefined) { i[f] = []; continue; }
-        if (typeof i[f] === "string") { try { i[f] = JSON.parse(i[f]); } catch { i[f] = i[f].split(/[s,]+/).filter(Boolean); } }
+        if (typeof i[f] === "string") { try { i[f] = JSON.parse(i[f]); } catch { i[f] = i[f].split(/[\s,]+/).filter(Boolean); } }
         if (!Array.isArray(i[f])) throw new Error(`${f} must be a list of IDs`);
-        const bad = i[f].filter((id) => (f === "draft_ids" ? !actionsLayer.actions.get(id) : !prospectsDb.prospects.get(id)));
+        const bad = i[f].filter((id) => !(exists[f] ?? prospectsDb.prospects.get)(id));
         if (bad.length) throw new Error(`${f} contains unknown IDs: ${bad.join(", ")}. Only submit IDs returned by the tools.`);
       }
       ctx.taskRun.output = { status: i.status, summary: i.summary, ...Object.fromEntries(listFields.map((f) => [f, i[f] ?? []])), data: i.data ?? null, files: i.files ?? [], structured: true };

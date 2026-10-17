@@ -133,6 +133,13 @@ export function fireBookingConfirmed(prospectId, { actor = "owner" } = {}) {
 }
 
 // ---------- Default workflows for Hasan's team ----------
+// Anonymous posts can't become clients, so web research looks for people who can be identified and
+// reached, and Reddit (anonymous by design) is used for helpful reply drafts instead of lead lists.
+export const JOB_SEEKER_STEPS = {
+  signals: `Find mid-to-senior job seekers in the US or Canada who publicly show they need job-search help AND can be identified and reached. Good sources: LinkedIn posts by named people (#OpenToWork, "laid off", "looking for my next role", "100 applications") whose headline shows their level and location; posts on other public forums or blogs by named professionals. Skip anonymous posts with no name or profile: they can't become clients. Record each with upsert_prospect (pipeline job_seeker, source URL, evidence date, exact quote, linkedin_url if any, and in known: seniority and location with where you saw them). Put prospect IDs in prospect_ids. If you find none, submit status "no_results" with an empty list. Never invent people.`,
+  reddit: `Reddit users are anonymous, so use Reddit for engagement, not lead lists. Web search and fetch can't reach reddit.com: read it with your browser tools (old.reddit.com search and subreddit pages). Find up to 5 recent threads (last 14 days) in r/jobs, r/jobsearchhacks, r/careerguidance, r/recruitinghell, r/cscareerquestions or industry subs where a mid-to-senior US/Canada professional asks for job-search help. For each, draft a genuinely helpful public reply with save_draft (channel reddit, intended_action public_post, destination = thread URL) that answers their question first; mention the service only if that subreddit's rules allow it. Nothing is posted. Record a prospect with upsert_prospect only when the post or profile states both seniority and location. Put draft IDs in draft_ids and any prospect IDs in prospect_ids; if nothing fits, submit "no_results".`,
+  qualify: `Qualify each upstream prospect for reverse recruiting. Mark "qualified" when the evidence reasonably shows mid-to-senior level (title, years or scope) AND a US/Canada location AND an active search; not every detail has to be confirmed: list what's unconfirmed in unknown. Use "needs_info" only when seniority or location is genuinely absent, and "disqualified" when clearly junior, outside the US/Canada, or not searching. Set qualification_status and a one-line rationale with update_prospect. Put qualified IDs in qualified_prospect_ids (empty list if none).`,
+};
 // Matches your existing teammates by name once and stores their IDs; later renames don't break anything.
 export function seedDefaultWorkflows() {
   if (workflows.list().length) return [];
@@ -148,12 +155,9 @@ export function seedDefaultWorkflows() {
     name: "Job seekers", pipeline: "job_seeker",
     description: "Find mid-to-senior US/Canada job seekers showing buying signals, qualify them, draft outreach, update the pipeline.",
     steps: [
-      { key: "signals", title: "Find buying signals (web)", agent_id: ids.ryan, depends_on: [],
-        instructions: `Find public posts from mid-to-senior job seekers in the US or Canada who show a need for job-search help (e.g. burnout from applying, asking about recruiters, long searches). ${OUT} Put the new or updated prospect IDs in prospect_ids. If you find none, submit status "no_results" with an empty prospect_ids list. Never invent people.` },
-      { key: "reddit", title: "Community research (Reddit)", agent_id: ids.reddit, depends_on: [],
-        instructions: `Research relevant subreddits for mid-to-senior US/Canada job seekers expressing a need for job-search help. Web search and fetch cannot reach reddit.com, so read Reddit with your browser tools (browser_navigate to old.reddit.com search or subreddit pages). Read only; do not post or comment. ${OUT} Put prospect IDs in prospect_ids. If none qualify, submit status "no_results" with an empty list.` },
-      { key: "qualify", title: "Qualify prospects", agent_id: ids.adam, depends_on: ["signals", "reddit"], condition: { type: "deps_list_nonempty", field: "prospect_ids" },
-        instructions: "Qualify each upstream prospect for reverse recruiting (seniority, location US/Canada, active search, fit). Use update_prospect to set qualification_status and rationale; list unknown fields honestly. Put qualified IDs in qualified_prospect_ids (empty list if none)." },
+      { key: "signals", title: "Find buying signals (web)", agent_id: ids.ryan, depends_on: [], instructions: JOB_SEEKER_STEPS.signals },
+      { key: "reddit", title: "Community engagement (Reddit)", agent_id: ids.reddit, depends_on: [], instructions: JOB_SEEKER_STEPS.reddit },
+      { key: "qualify", title: "Qualify prospects", agent_id: ids.adam, depends_on: ["signals", "reddit"], condition: { type: "deps_list_nonempty", field: "prospect_ids" }, instructions: JOB_SEEKER_STEPS.qualify },
       { key: "outreach", title: "Draft outreach", agent_id: ids.zara, depends_on: ["qualify"], condition: { type: "deps_list_nonempty", field: "qualified_prospect_ids" },
         instructions: "Write a short, specific outreach draft for each qualified prospect, grounded in their quote. Save each with save_draft (include prospect_id and destination if known). Do not send. Put the prospect IDs you drafted for in prospect_ids and draft IDs in draft_ids." },
       { key: "pipeline", title: "Update pipeline", agent_id: ids.omar, depends_on: ["outreach"], condition: { type: "deps_list_nonempty", field: "prospect_ids" },

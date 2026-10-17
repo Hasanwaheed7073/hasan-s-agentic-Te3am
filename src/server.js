@@ -3,7 +3,7 @@ import express from "express";
 import http from "node:http";
 import { mkdirSync } from "node:fs";
 import { WebSocketServer } from "ws";
-import { agents, threads, memories, settings } from "./db.js";
+import { db, agents, threads, memories, settings } from "./db.js";
 import { DEFAULT_TEAM, DEFAULT_COMPANY_CONTEXT, isLegacyContext, upgradeTeam } from "./defaults.js";
 import { TOOL_GROUPS } from "./tools.js";
 import { MODELS, ADVISORS } from "./models.js";
@@ -17,6 +17,8 @@ import * as act from "./actions.js";
 import * as conn from "./connections.js";
 import * as prov from "./providers.js";
 import * as camp from "./campaigns.js";
+import * as jobsMod from "./jobs.js";
+import { applyResultsUpgrade } from "./upgrades.js";
 import { listActivity, usageSummary, setLimits, getLimits, logActivity } from "./activity.js";
 import {
   closeBrowser, openBrowser, browserStatus, tabTitle, tabPreview, bringToFront, openOwnerTab, clearCookiesFor, getEngine,
@@ -31,6 +33,7 @@ if (!ctx0 || isLegacyContext(ctx0)) settings.set("company_context", DEFAULT_COMP
 upgradeTeam();
 wf.seedDefaultWorkflows();
 camp.seedZeeCampaign();
+applyResultsUpgrade();
 sched.migrateLegacySchedules();
 act.expireStaleInteractive();
 queue.startWorker();
@@ -277,6 +280,32 @@ app.post("/api/campaigns/:id/run", h((req) => {
 }));
 app.post("/api/drafts/:id/review", h((req) => camp.recordReview({ action_id: req.params.id, checks: req.body.checks, verdict: req.body.verdict, notes: req.body.notes, reviewer_kind: "manual", reviewer: "owner" })));
 app.post("/api/drafts/:id/revise", h((req) => act.manualRevision(req.params.id, req.body.content)));
+
+// ---------- Clients and job search ----------
+const jobWorkflow = () => wf.workflows.list().find((w) => w.name === "Client job search");
+const activeSearch = (clientId) => db.prepare("SELECT * FROM workflow_runs WHERE status = 'running' AND json_extract(input, '$.client_id') = ? ORDER BY created_at DESC LIMIT 1").get(clientId);
+app.get("/api/clients", (_req, res) => res.json(jobsMod.clients.list().map((c) => ({ ...c, resume_text: undefined, has_resume: Boolean(c.resume_text), counts: jobsMod.jobs.counts(c.id), searching: Boolean(activeSearch(c.id)) }))));
+app.post("/api/clients", h((req) => jobsMod.saveClient({ ...req.body, id: undefined })));
+app.put("/api/clients/:id", h((req) => { if (!jobsMod.clients.get(req.params.id)) throw new Error("No such client"); return jobsMod.saveClient({ ...req.body, id: req.params.id }); }));
+app.get("/api/clients/:id", h((req) => {
+  const c = jobsMod.clients.get(req.params.id);
+  if (!c) throw new Error("No such client");
+  const run = activeSearch(c.id);
+  return { client: c, jobs: jobsMod.jobs.list({ client_id: c.id }), active_run: run ?? null, workflow_id: jobWorkflow()?.id ?? null };
+}));
+app.post("/api/clients/:id/search", h((req) => {
+  const c = jobsMod.clients.get(req.params.id);
+  if (!c) throw new Error("No such client");
+  if (c.status !== "active") throw new Error("This client is paused. Set them to active first.");
+  const w = jobWorkflow();
+  if (!w) throw new Error('No "Client job search" workflow. Restart the app to create it, or add it on the Workflows page.');
+  if (activeSearch(c.id)) throw new Error("A search for this client is already running.");
+  const target = Math.min(30, Math.max(1, Number(req.body?.target_count) || 10));
+  return wf.runWorkflow(w.id, { client_id: c.id, client: c.label, target_count: target }, { actor: "owner" });
+}));
+app.put("/api/jobs/:id/status", h((req) => jobsMod.setJobStatus(req.params.id, req.body.status, { note: req.body.note })));
+app.post("/api/jobs/:id/recheck", h((req) => jobsMod.recheckJob(req.params.id)));
+app.put("/api/jobs/:id/application", h((req) => jobsMod.saveApplication(req.params.id, req.body, { agent_id: "owner", origin: "manual" })));
 
 // ---------- Custom AI providers ----------
 app.get("/api/providers", (_req, res) => res.json({ presets: prov.PRESETS, providers: prov.providers.list().map(prov.publicProvider) }));

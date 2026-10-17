@@ -227,12 +227,15 @@ export function hasActiveRun(campaignId) {
 // ---------- One-time setup for the approved Zee Careers test campaign ----------
 const SERVICE = "White-label reverse recruiting for career coaches, resume writers and career-service agencies: we run their clients' job search behind the scenes, including targeted job sourcing, tailored applications, recruiter outreach, follow-ups and progress tracking.";
 
+export const OLD_CAMPAIGN_OUTREACH_START = "For each upstream prospect, write one short draft with save_draft (include prospect_id, channel and destination from the verified contact method).";
+export const CAMPAIGN_OUTREACH_INSTRUCTIONS = "Write one short draft with save_draft for EVERY upstream prospect (include prospect_id, channel and destination from the verified contact method). Ground the personalization in their recorded evidence, describe the service only with the approved description, sign as the campaign sender, and include an easy way to decline. If research flagged something to confirm (a title, a name spelling), still write the draft, avoid relying on the uncertain detail, and put the doubt in owner_notes: the owner reviews every draft before anything is sent. Do not send. Put draft IDs in draft_ids and the prospect IDs in prospect_ids.";
+
 export function campaignWorkflowSteps(ids) {
   return [
     { key: "research", title: "Research & verify agency prospects", agent_id: ids.sarah, depends_on: [], validate: "research_verified",
       instructions: "Find US and Canadian career coaches, resume writers and career-service agencies that fit the campaign. For each candidate, open its website and record evidence with upsert_prospect (pipeline agency), then call record_verification with the four required items and their source URLs. Only outreach-ready prospects go in prospect_ids. Honest zero results are fine." },
     { key: "outreach", title: "Draft personalized outreach", agent_id: ids.zara, depends_on: ["research"], condition: { type: "deps_list_nonempty", field: "prospect_ids" }, validate: "drafts_for_prospects",
-      instructions: "For each upstream prospect, write one short draft with save_draft (include prospect_id, channel and destination from the verified contact method). Ground the personalization in their recorded evidence, describe the service only with the approved description, sign as the campaign sender, and include an easy way to decline. Do not send. Put draft IDs in draft_ids and the prospect IDs in prospect_ids." },
+      instructions: CAMPAIGN_OUTREACH_INSTRUCTIONS },
     { key: "review", title: "Quality review & pipeline update", agent_id: ids.omar, depends_on: ["outreach"], condition: { type: "deps_list_nonempty", field: "draft_ids" }, validate: "review_complete",
       instructions: "Review every upstream draft (full text is in your brief; get_drafts also returns it) against the approved service description and the prospect's evidence. Call record_review for each with all six checks: personalization, factual_accuracy, sender_identity, duplicate_prospect, opt_out_wording, missing_information. Then set next_action with update_prospect and log an interaction. Nothing is sent. Put reviewed draft IDs in draft_ids." },
   ];

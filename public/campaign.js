@@ -99,7 +99,9 @@ export async function renderCampaign(id) {
   $("#run-campaign").onclick = async () => {
     const avg = d.agents.map((a) => `${a.name.split(/\s[-—]/)[0]}`).join(" → ");
     if (!confirm(`Run ${avg} now with real models?\n\nThis uses your Claude plan. Remaining campaign budget: $${s.remaining.toFixed(2)}. Each step only starts if what's left covers its typical cost.\n\nNothing will be sent: the campaign is draft-only.`)) return;
-    try { await api(`/campaigns/${c.id}/run`, { method: "POST", body: {} }); toast("Campaign started"); renderCampaign(c.id); } catch (err) { toast(err.message, "err"); }
+    const target = prompt("How many verified agencies should Sarah aim for this run?", "5");
+    if (!target) return;
+    try { await api(`/campaigns/${c.id}/run`, { method: "POST", body: { input: { target_count: Number(target) || 5 } } }); toast("Campaign started"); renderCampaign(c.id); } catch (err) { toast(err.message, "err"); }
   };
   root.addEventListener("click", async (e) => {
     const t = e.target.closest("[data-task]");
@@ -137,6 +139,7 @@ function draftCard(x) {
       <span class="pill ${x.origin === "manual" ? "warn" : "muted"}">${x.origin === "manual" ? "manual correction" : `by ${esc(agentName(x.agent_id))}`}</span>
       <span class="sub">${esc(x.channel)} → ${esc(x.destination || "?")}</span></div>
     <pre class="content">${esc(x.content)}</pre>
+    ${x.owner_notes ? `<div class="banner warn"><b>For you to confirm:</b> ${esc(x.owner_notes)}</div>` : ""}
     <div class="chips-row">${auto.map(([k, v]) => `<span class="pill ${v.pass ? "good" : "bad"}" title="${esc(v.note)}">${v.pass ? "✓" : "✗"} ${esc(AUTO_LABEL[k] ?? k)}</span>`).join("")}<span class="sub"> automatic checks</span></div>
     ${x.reviews.map((r) => `<div class="review ${r.reviewer_kind}">
       <div class="action-head"><b>${r.reviewer_kind === "manual" ? "Your review (manual)" : `${esc(agentName(r.reviewer))}'s review (agent-generated)`}</b>

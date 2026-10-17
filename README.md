@@ -45,6 +45,19 @@ The **Campaign** page is the single source of truth for brand, sender, target, a
 - **Budget:** the meter is the engine-recorded cost of the campaign's runs (reconciled against the usage log). A step won't start unless the remaining budget covers its typical cost, and it runs with the remaining amount as a hard cap. Costs are Claude Code estimates on your plan.
 - **Stall detection:** a run with no tool call or output for 5 minutes (Settings) is stopped and retried.
 
+## Clients (job search for your clients)
+
+**Clients** → add a client with a label (e.g. *Client A*), target titles, locations, work mode, seniority, salary floor, must-haves, exclusions and their resume as plain text. The full name is optional and stays with you; agents only see the label. **Find jobs** asks how many matches to aim for and runs *Client job search*:
+
+- **Scout** searches job boards, company career pages and ATS sites, records each posting with `add_job` and scores it with `score_job`. The system loads every link itself: *live*, *closed* (the page says it's no longer accepting applications), *dead* (404) or *check link yourself* (the site blocks automated checks). Closed and dead postings can't be shortlisted. The same link, or the same company and title, is never added twice for a client.
+- **Zara** writes an application pack per shortlisted job: a cover note naming the company, resume tweaks and screening answers, using only experience in the resume. Gaps go to *owner notes*.
+- **Nothing is submitted.** You apply, then click **I applied** (then Interview / Offer / Rejected) to track it.
+
+## Targets and handoffs
+
+- Campaign and job-search runs take a **target** (e.g. 5 verified agencies, 10 jobs). The first step keeps searching until it reaches the target or genuinely runs out of options, then reports how many and why it fell short.
+- Downstream steps work on every record handed to them. Caveats from upstream ("confirm this title first") go into the draft's **owner notes**, shown in yellow on the draft, instead of stopping the workflow. You still approve everything before it goes out.
+
 ## Custom AI providers (Groq and other OpenAI-compatible APIs)
 
 Connections → **AI providers** → *Add a provider*. Pick a preset (Groq, OpenRouter, Together, Fireworks, local Ollama) or enter any OpenAI-compatible base URL, paste the API key, then **Test & list models** and choose a model. Keys are saved only in this folder's `.env`; the page shows only the last 4 characters.
@@ -94,8 +107,3 @@ A **TEST · deterministic, no AI** model option runs scripted steps through the 
 - `data/team.db`: everything (team, chats, tasks, runs, workflows, prospects, approvals, grants, schedules, usage).
 - `workspace/`: files the team writes.
 - `data/browser-profile-chrome/`: the team browser's logins. Keep it private.
-U n k n o w n   c o m m a n d :   " e c h o "  
-  
- T o   s e e   a   l i s t   o f   s u p p o r t e d   n p m   c o m m a n d s ,   r u n :  
-     n p m   h e l p  
- 

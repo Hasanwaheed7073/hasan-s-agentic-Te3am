@@ -16,6 +16,20 @@ function resultText(out) {
   return s.length > MAX_TOOL_RESULT ? s.slice(0, MAX_TOOL_RESULT) + "\n...[truncated]" : s || "(no output)";
 }
 
+// The whole history is re-sent on every step, so old page text is shortened once newer results
+// arrive. This keeps long research runs inside free-tier token limits.
+const KEEP_FULL_RESULTS = 4;
+const OLD_RESULT_CHARS = 1200;
+function compactHistory(history) {
+  let seen = 0;
+  for (let k = history.length - 1; k >= 0; k--) {
+    const m = history[k];
+    if (m.role !== "tool") continue;
+    if (++seen <= KEEP_FULL_RESULTS || m.content.length <= OLD_RESULT_CHARS) continue;
+    m.content = `${m.content.slice(0, OLD_RESULT_CHARS)}\n...[older result shortened to save tokens; fetch again if you need it]`;
+  }
+}
+
 export async function runOpenAiTurn({ agent, config, ctx, emit, messages, save, signal, userText }) {
   const p = providers.get(config.providerId);
   if (!p) return { status: "error", errorKind: "fatal", errorMessage: "This member's AI provider was deleted. Choose another model in their profile.", model: config.model };
@@ -32,6 +46,7 @@ export async function runOpenAiTurn({ agent, config, ctx, emit, messages, save, 
   try {
     for (let step = 0; step < MAX_STEPS; step++) {
       if (signal.aborted) return { status: "stopped", text: lastText, usage, costUsd, model: `${p.name}:${p.model}` };
+      compactHistory(config.history);
       const r = await chatCompletion(p, { messages: config.history, ...(tools.length ? { tools, tool_choice: "auto" } : {}), temperature: 0.3 }, {
         signal, onWait: (ms) => emit({ type: "note", message: `${p.name} rate limit: waiting ${Math.ceil(ms / 1000)}s for the reset` }),
       });

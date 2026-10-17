@@ -173,9 +173,10 @@ export const onTaskChanged = (fn) => {
 export const onTick = (fn) => hooks.onTick.push(fn);
 // Set by campaigns.js: a pre-launch check (e.g. campaign budget) and a validator for step outputs.
 let launchCheck = () => null;      // (task) => null | { reason }
-let outputValidator = () => null;  // (task, output) => null | "why it failed"
+const outputValidators = [];        // each (task, output) => null | "why it failed"; the first failure wins
 export const setLaunchCheck = (fn) => (launchCheck = fn);
-export const setOutputValidator = (fn) => (outputValidator = fn);
+export const setOutputValidator = (fn) => outputValidators.push(fn);
+const outputValidator = (t, output) => { for (const v of outputValidators) { const r = v(t, output); if (r) return r; } return null; };
 
 // Decides whether a queued task can start now.
 function gate(t) {

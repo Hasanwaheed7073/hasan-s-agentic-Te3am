@@ -105,6 +105,18 @@ db.exec(`
     id TEXT PRIMARY KEY, action_id TEXT NOT NULL, prospect_id TEXT, campaign_id TEXT, task_id TEXT,
     reviewer_kind TEXT NOT NULL, reviewer TEXT NOT NULL, checks TEXT NOT NULL, verdict TEXT NOT NULL, notes TEXT, created_at INTEGER NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS clients (
+    id TEXT PRIMARY KEY, label TEXT NOT NULL, full_name TEXT, target_titles TEXT NOT NULL DEFAULT '[]', locations TEXT NOT NULL DEFAULT '[]',
+    work_mode TEXT NOT NULL DEFAULT 'any', seniority TEXT, salary_floor TEXT, industries TEXT, must_haves TEXT, exclusions TEXT,
+    resume_text TEXT, notes TEXT, status TEXT NOT NULL DEFAULT 'active', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS jobs (
+    id TEXT PRIMARY KEY, client_id TEXT NOT NULL, title TEXT NOT NULL, company TEXT NOT NULL, url TEXT NOT NULL, url_canon TEXT,
+    location TEXT, work_mode TEXT, posted_date TEXT, salary_text TEXT, requirements TEXT, source TEXT, status TEXT NOT NULL,
+    link_state TEXT, link_status INTEGER, link_note TEXT, link_checked_at INTEGER, fit_score INTEGER, fit_reasons TEXT, gaps TEXT,
+    application TEXT, owner_note TEXT, applied_at INTEGER, found_by TEXT, scored_by TEXT, task_id TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_jobs_client ON jobs(client_id);
   CREATE TABLE IF NOT EXISTS providers (
     id TEXT PRIMARY KEY, name TEXT NOT NULL, base_url TEXT NOT NULL, model TEXT NOT NULL, key_env TEXT,
     price_in REAL, price_out REAL, created_at INTEGER NOT NULL
@@ -127,6 +139,7 @@ for (const sql of [
   "ALTER TABLE actions ADD COLUMN superseded_by TEXT",
   "ALTER TABLE actions ADD COLUMN origin TEXT NOT NULL DEFAULT 'agent'",
   "ALTER TABLE actions ADD COLUMN campaign_id TEXT",
+  "ALTER TABLE actions ADD COLUMN owner_notes TEXT",
   "ALTER TABLE threads ADD COLUMN config TEXT",
   "ALTER TABLE threads ADD COLUMN context_hash TEXT",
   "ALTER TABLE tasks ADD COLUMN input TEXT",
