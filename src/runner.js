@@ -343,13 +343,14 @@ function taskBrief(task, upstream) {
   const jobIds = [...new Set(upstream.flatMap((u) => u.output?.job_ids ?? []))];
   const jobRecords = jobIds.map((id) => jobsMod.jobs.get(id)).filter(Boolean).map((j) => ({
     job_id: j.id, title: j.title, company: j.company, url: j.url, location: j.location, work_mode: j.work_mode, posted_date: j.posted_date,
-    salary_text: j.salary_text, requirements: j.requirements, status: j.status, link_state: j.link_state, fit_score: j.fit_score, fit_reasons: j.fit_reasons, gaps: j.gaps,
+    salary_text: j.salary_text, requirements: j.requirements?.slice(0, 2500) ?? null, status: j.status, link_state: j.link_state, fit_score: j.fit_score, fit_reasons: j.fit_reasons, gaps: j.gaps,
   }));
   const target = Number(task.input?.target_count) > 0 ? Number(task.input.target_count) : null;
   const { answers, test_script, test_scripts, ...inputs } = task.input ?? {};
   const parts = [
     campaign ? campaignsMod.campaignBlock(campaign) : null,
     task.validator === "research_verified" ? campaignsMod.VERIFICATION_RULES : null,
+    task.validator === "jobs_shortlisted" ? jobsMod.SOURCING_PLAYBOOK : null,
     `TASK: ${task.title}`,
     `Task id: ${task.id}. Attempt ${task.attempts}.`,
     task.description ? `INSTRUCTIONS:\n${task.description}` : null,

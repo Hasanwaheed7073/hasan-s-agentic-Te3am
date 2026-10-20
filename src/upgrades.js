@@ -1,10 +1,10 @@
 // One-time upgrade (2026-10-18, approved by the owner): client job search, retargeted job-seeker steps,
-// no-stall campaign handoff, and Groq for the high-volume research members with Haiku as fallback.
+// no-stall campaign handoff.
 // Only changes things still at their earlier defaults; your own edits are left alone.
 import { db, agents, settings } from "./db.js";
 import { logActivity } from "./activity.js";
 import { workflows, saveWorkflow, JOB_SEEKER_STEPS } from "./workflows.js";
-import { jobSearchSteps } from "./jobs.js";
+import { jobSearchSteps, OLD_SOURCE_START, OLD_TAILOR_START, SOURCE_INSTRUCTIONS, TAILOR_INSTRUCTIONS } from "./jobs.js";
 import { OLD_CAMPAIGN_OUTREACH_START, CAMPAIGN_OUTREACH_INSTRUCTIONS } from "./campaigns.js";
 
 const OLD_SCOUT_START = "You source job openings for the owner's clients (job seekers moving into or up within clinical research).";
@@ -52,18 +52,47 @@ export function applyResultsUpgrade() {
     if (touched) { saveWorkflow({ ...w, steps }); changes.push(`workflow "${w.name}": updated step instructions`); }
   }
 
-  // 4. Groq for volume research, Haiku as the automatic fallback when Groq is rate-limited or down.
-  const groq = db.prepare("SELECT p.id FROM providers p JOIN connections c ON c.key = 'provider:' || p.id WHERE p.base_url LIKE '%api.groq.com%' AND c.status = 'working' ORDER BY p.created_at LIMIT 1").get();
-  if (groq) {
-    for (const re of VOLUME_MEMBERS) {
-      const a = find(re);
-      if (!a || a.model !== "haiku") continue;
-      agents.update(a.id, { model: `provider:${groq.id}`, fallback_model: a.fallback_model || "haiku" });
-      changes.push(`${a.name.split(/\s[-—]/)[0]}: Groq, Haiku fallback`);
-    }
-  }
-
+  // (This upgrade first also moved four members to Groq; that was reverted by the second upgrade below.)
   settings.set("results_upgrade_v1", String(Date.now()));
   if (changes.length) logActivity({ kind: "upgrade", summary: `Results upgrade: ${changes.join("; ")}` });
+  return changes;
+}
+
+// Second upgrade (2026-10-18): direct job-source tools and the sourcing playbook. The first real run
+// showed Groq's free tier rate-limits these prompts on the first request and that search engines
+// block automated queries, so members moved to Groq by the first upgrade go back to Haiku (which
+// has Claude's own web search). Only reverts what the first upgrade set.
+const SCOUT_INSTRUCTIONS_V2 = `You source job openings for the owner's reverse-recruiting clients: mid-to-senior professionals in the US and Canada, any industry.
+- Work from the client profile in your brief and follow the JOB SOURCING PLAYBOOK it includes.
+- Search with search_jobs (LinkedIn public listings, company Greenhouse/Lever/Ashby/SmartRecruiters boards, remote boards). Record candidates in bulk with add_jobs, read requirements with find_jobs, then shortlist or skip with score_jobs.
+- Refer to clients only by their label. Never invent postings, salaries or links.
+- Never submit an application. If a site shows a bot check or needs a login, stop using it and say so.`;
+export function applyJobSourcingUpgrade() {
+  if (settings.get("results_upgrade_v2")) return null;
+  const changes = [];
+  const find = (re) => agents.list().find((a) => re.test(a.name));
+  const scout = find(/^scout/i);
+  if (scout && (scout.instructions === SCOUT_INSTRUCTIONS || scout.instructions.startsWith(OLD_SCOUT_START))) {
+    agents.update(scout.id, { instructions: SCOUT_INSTRUCTIONS_V2 });
+    changes.push("Scout: sourcing playbook instructions");
+  }
+  for (const w of workflows.list().filter((x) => x.name === "Client job search")) {
+    let touched = false;
+    const steps = w.steps.map((s) => {
+      if (s.key === "source" && s.instructions?.startsWith(OLD_SOURCE_START)) { touched = true; return { ...s, instructions: SOURCE_INSTRUCTIONS }; }
+      if (s.key === "tailor" && s.instructions?.startsWith(OLD_TAILOR_START)) { touched = true; return { ...s, instructions: TAILOR_INSTRUCTIONS }; }
+      return s;
+    });
+    if (touched) { saveWorkflow({ ...w, steps }); changes.push("Client job search: bulk tools and playbook"); }
+  }
+  const groqIds = new Set(db.prepare("SELECT id FROM providers WHERE base_url LIKE '%api.groq.com%'").all().map((p) => `provider:${p.id}`));
+  for (const re of VOLUME_MEMBERS) {
+    const a = find(re);
+    if (!a || !groqIds.has(a.model) || a.fallback_model !== "haiku") continue;
+    agents.update(a.id, { model: "haiku", fallback_model: null });
+    changes.push(`${a.name.split(/\s[-—]/)[0]}: back to Haiku`);
+  }
+  settings.set("results_upgrade_v2", String(Date.now()));
+  if (changes.length) logActivity({ kind: "upgrade", summary: `Job sourcing upgrade: ${changes.join("; ")}` });
   return changes;
 }

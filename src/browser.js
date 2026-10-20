@@ -11,7 +11,25 @@ const pages = new Map(); // agentId (or "owner") -> Page
 
 export const getEngine = () => settings.get("browser_engine", "chrome");
 
+// "own": connect to a normal Chrome you started yourself with start-team-chrome.bat. Chrome isn't
+// launched by the automation tool, so it runs like any browser you use by hand. The team only opens
+// and closes its own tabs there; your other tabs are left alone.
+export const TEAM_CHROME_URL = () => process.env.TEAM_CHROME_URL || "http://127.0.0.1:9222";
+let ownBrowser = null;
+async function connectOwn() {
+  let b;
+  try { b = await chromium.connectOverCDP(TEAM_CHROME_URL(), { timeout: 8000 }); }
+  catch { throw new Error("Your team Chrome isn't open. Double-click start-team-chrome.bat in the app folder (it opens Chrome ready for the team), then try again."); }
+  const ctx = b.contexts()[0];
+  if (!ctx) { await b.close().catch(() => {}); throw new Error("Connected to Chrome but found no window. Open a Chrome window and try again."); }
+  ownBrowser = b;
+  b.on("disconnected", () => { ownBrowser = null; contextPromise = null; activeEngine = null; pages.clear(); });
+  return ctx;
+}
+export const isOwnChrome = () => activeEngine === "own";
+
 async function launch(engine) {
+  if (engine === "own") return connectOwn();
   const opts = {
     headless: process.env.BROWSER_HEADLESS === "true",
     viewport: null, // follow the window size
@@ -28,7 +46,7 @@ async function getContext() {
     contextPromise = launch(wanted)
       .then((ctx) => (activeEngine = wanted, ctx))
       .catch(async (err) => {
-        if (wanted !== "chrome") throw err;
+        if (wanted !== "chrome") throw err; // "own" never silently falls back to a launched browser
         console.warn("Google Chrome failed to launch, falling back to Chromium:", err.message);
         activeEngine = "chromium";
         return launch("chromium");
@@ -149,7 +167,8 @@ export async function pageFor(agentId) {
   if (existing && !existing.isClosed()) return existing;
   const ctx = await getContext();
   // Reuse the blank tab Chromium opens on launch for the first agent.
-  const blank = ctx.pages().find((p) => p.url() === "about:blank" && ![...pages.values()].includes(p));
+  // (In your own Chrome, the team always opens new tabs and never takes over yours.)
+  const blank = activeEngine === "own" ? null : ctx.pages().find((p) => p.url() === "about:blank" && ![...pages.values()].includes(p));
   const page = blank ?? (await ctx.newPage());
   page.setDefaultTimeout(20000);
   pages.set(agentId, page);
@@ -288,5 +307,14 @@ export async function screenshot(agentId) {
 }
 
 export async function closeBrowser() {
-  if (contextPromise) await (await contextPromise).close().catch(() => {});
+  if (!contextPromise) return;
+  if (activeEngine === "own") {
+    // Close only the team's tabs, then disconnect. Your Chrome and your own tabs stay open.
+    for (const p of pages.values()) await p.close().catch(() => {});
+    pages.clear();
+    await ownBrowser?.close().catch(() => {});
+    ownBrowser = null; contextPromise = null; activeEngine = null;
+    return;
+  }
+  await (await contextPromise).close().catch(() => {});
 }

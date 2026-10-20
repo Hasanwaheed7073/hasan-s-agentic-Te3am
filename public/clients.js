@@ -30,6 +30,7 @@ function clientForm(c = {}) {
       <label>Salary floor<input name="salary_floor" value="${v("salary_floor")}" placeholder="CAD 150k" /></label>
       <label>Industries<input name="industries" value="${v("industries")}" placeholder="SaaS, fintech" /></label>
     </div>
+    <label>Target companies<textarea name="target_companies" rows="2" placeholder="Shopify, Stripe, lever:palantir, https://jobs.ashbyhq.com/ramp">${v("target_companies")}</textarea><span class="hint">Scout checks these companies' job boards directly (Greenhouse, Lever, Ashby, SmartRecruiters). Comma-separated.</span></label>
     <label>Must-haves<textarea name="must_haves" rows="2">${v("must_haves")}</textarea></label>
     <label>Exclusions<textarea name="exclusions" rows="2" placeholder="No agencies, no relocation, no commission-only">${v("exclusions")}</textarea></label>
     <label>Resume (plain text)<textarea name="resume_text" rows="8" placeholder="Paste the client's resume. Application packs use only what's here.">${v("resume_text")}</textarea></label>
@@ -80,12 +81,22 @@ export async function renderClient(id) {
       <div><h3 class="section">Profile</h3>${clientForm(c)}</div>
     </div>`, {
     sub: `${esc(c.target_titles.join(", "))}${c.locations.length ? ` · ${esc(c.locations.join(", "))}` : ""} · ${esc(c.work_mode)}`,
-    actions: `${d.active_run ? `<a class="pill warn" href="#" data-run="${d.active_run.id}">Search running…</a>` : ""}
+    actions: `${d.schedule ? `<span class="pill good" title="next run ${esc(fmtTime(d.schedule.next_run_at))}">Daily search on · ${esc(d.schedule.cron.split(" ")[1])}:00 · target ${d.schedule.input.target_count}</span> <button class="btn-grey sm" id="sched-off">Stop daily</button>` : `<button class="btn-grey" id="sched-on">Search daily</button>`}
+      ${d.active_run ? `<a class="pill warn" href="#" data-run="${d.active_run.id}">Search running…</a>` : ""}
       <button class="btn-blue" id="find-jobs" ${d.active_run || !d.workflow_id ? "disabled" : ""}>Find jobs</button>`,
   });
   $("#client-form").onsubmit = (e) => submitClient(e, c.id);
+  const so = $("#sched-on"), sf = $("#sched-off");
+  if (so) so.onclick = async () => {
+    const hour = prompt("Run the search every weekday at what hour? (0-23, this PC's time)", "8");
+    if (hour === null) return;
+    const n = prompt("How many matching jobs per day?", "20");
+    if (!n) return;
+    try { await api(`/clients/${c.id}/schedule`, { method: "POST", body: { hour: Number(hour), target_count: Number(n) } }); toast("Daily search scheduled"); renderClient(c.id); } catch (err) { toast(err.message, "err"); }
+  };
+  if (sf) sf.onclick = async () => { try { await api(`/clients/${c.id}/schedule`, { method: "POST", body: { off: true } }); toast("Daily search stopped"); renderClient(c.id); } catch (err) { toast(err.message, "err"); } };
   $("#find-jobs").onclick = async () => {
-    const n = prompt(`How many matching jobs should Scout aim for?\n\nScout runs on its own model (Groq if set, Haiku fallback); Zara writes the packs on your Claude plan. Nothing is submitted.`, "10");
+    const n = prompt(`How many matching jobs should Scout aim for?\n\nScout searches LinkedIn, company job boards and remote boards; Zara writes the packs. Both use your Claude plan. Nothing is submitted.`, "10");
     if (!n) return;
     try { await api(`/clients/${c.id}/search`, { method: "POST", body: { target_count: Number(n) } }); toast("Job search started"); renderClient(c.id); } catch (err) { toast(err.message, "err"); }
   };

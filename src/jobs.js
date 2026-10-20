@@ -5,12 +5,13 @@ import { db, now, uid, json } from "./db.js";
 import { broadcast } from "./hub.js";
 import { logActivity } from "./activity.js";
 import { setOutputValidator, tasks as taskRepo } from "./queue.js";
+import { jobDetails } from "./jobsources.js";
 
 export const WORK_MODES = ["any", "remote", "hybrid", "onsite"];
 export const JOB_STATUSES = ["found", "shortlisted", "skipped", "tailored", "applied", "interview", "offer", "rejected", "closed"];
 const OWNER_STATUSES = ["shortlisted", "skipped", "applied", "interview", "offer", "rejected", "closed"];
 
-const parseClient = (c) => c && { ...c, target_titles: json(c.target_titles, []), locations: json(c.locations, []) };
+const parseClient = (c) => c && { ...c, target_titles: json(c.target_titles, []), locations: json(c.locations, []), target_companies: json(c.target_companies, []) };
 const parseJob = (j) => j && { ...j, application: json(j.application, null), fit_reasons: json(j.fit_reasons, []), gaps: json(j.gaps, []) };
 
 export const clients = {
@@ -40,6 +41,7 @@ export function saveClient(input, { actor = "owner" } = {}) {
     label: text(input.label) ?? cur?.label, full_name: input.full_name !== undefined ? text(input.full_name) : cur?.full_name ?? null,
     target_titles: input.target_titles !== undefined ? list(input.target_titles) : cur?.target_titles ?? [],
     locations: input.locations !== undefined ? list(input.locations) : cur?.locations ?? [],
+    target_companies: input.target_companies !== undefined ? list(input.target_companies) : cur?.target_companies ?? [],
     work_mode: input.work_mode ?? cur?.work_mode ?? "any", seniority: input.seniority !== undefined ? text(input.seniority) : cur?.seniority ?? null,
     salary_floor: input.salary_floor !== undefined ? text(input.salary_floor) : cur?.salary_floor ?? null,
     industries: input.industries !== undefined ? text(input.industries) : cur?.industries ?? null,
@@ -53,7 +55,7 @@ export function saveClient(input, { actor = "owner" } = {}) {
   if (!c.target_titles.length) throw new Error("Add at least one target job title.");
   if (!WORK_MODES.includes(c.work_mode)) throw new Error(`work_mode must be one of: ${WORK_MODES.join(", ")}`);
   if (!["active", "paused"].includes(c.status)) throw new Error("status must be active or paused");
-  const cols = ["label", "full_name", "target_titles", "locations", "work_mode", "seniority", "salary_floor", "industries", "must_haves", "exclusions", "resume_text", "notes", "status"];
+  const cols = ["label", "full_name", "target_titles", "locations", "target_companies", "work_mode", "seniority", "salary_floor", "industries", "must_haves", "exclusions", "resume_text", "notes", "status"];
   const vals = cols.map((k) => (Array.isArray(c[k]) ? JSON.stringify(c[k]) : c[k]));
   if (cur) db.prepare(`UPDATE clients SET ${cols.map((k) => `${k}=?`).join(", ")}, updated_at=? WHERE id=?`).run(...vals, now(), id);
   else db.prepare(`INSERT INTO clients (id, ${cols.join(", ")}, created_at, updated_at) VALUES (?, ${cols.map(() => "?").join(", ")}, ?, ?)`).run(id, ...vals, now(), now());
@@ -65,7 +67,7 @@ export function saveClient(input, { actor = "owner" } = {}) {
 // What agents see: everything they need to search and tailor, under the label. The full name stays with you.
 export function clientBrief(c) {
   return {
-    client_id: c.id, label: c.label, target_titles: c.target_titles, locations: c.locations, work_mode: c.work_mode, seniority: c.seniority,
+    client_id: c.id, label: c.label, target_titles: c.target_titles, locations: c.locations, target_companies: c.target_companies, work_mode: c.work_mode, seniority: c.seniority,
     salary_floor: c.salary_floor, industries: c.industries, must_haves: c.must_haves, exclusions: c.exclusions, notes: c.notes,
     resume_text: c.resume_text ? c.resume_text.slice(0, 12000) : null,
   };
@@ -79,6 +81,8 @@ const TRACKING = /^(utm_|ref|refid|trackingid|trk|src|source|from|position|pagen
 export function canonicalJobUrl(u) {
   try {
     const url = new URL(u);
+    const li = /linkedin\.com$/i.test(url.hostname) && url.pathname.match(/\/jobs\/view\/(?:[^/]*-)?(\d+)/);
+    if (li) return `linkedin.com/jobs/view/${li[1]}`;
     for (const k of [...url.searchParams.keys()]) if (TRACKING.test(k)) url.searchParams.delete(k);
     url.searchParams.sort();
     return `${url.hostname.toLowerCase().replace(/^www\.|^m\./, "")}${url.pathname.replace(/\/+$/, "")}${url.search}`;
@@ -113,13 +117,35 @@ export async function addJob(input, { agent_id = null, task_id = null } = {}) {
   const canon = canonicalJobUrl(input.url);
   const dup = db.prepare("SELECT * FROM jobs WHERE client_id = ? AND (url_canon = ? OR (lower(company) = lower(?) AND lower(title) = lower(?)))").get(c.id, canon, input.company.trim(), input.title.trim());
   if (dup) return { job_id: dup.id, duplicate: true, status: dup.status, link_state: dup.link_state, note: "Already recorded for this client; not added again." };
-  const chk = await checkPosting(input.url);
+  // Known sources (LinkedIn, Greenhouse, Lever) give the full posting: it doubles as the link check
+  // and fills in the requirements, so the writer and the owner see what the job actually asks for.
+  let chk; let details = null;
+  if (/linkedin\.com\/jobs\/view|greenhouse\.io\/[^/]+\/jobs\/|jobs\.lever\.co\//i.test(input.url)) {
+    try {
+      details = await jobDetails(input.url);
+      chk = details.closed ? { state: "closed", status: 200, note: "page says it's no longer accepting applications", checked_at: now() } : { state: "live", status: 200, checked_at: now() };
+    } catch (e) {
+      chk = e.status === 404 ? { state: "dead", status: 404, note: "page not found", checked_at: now() }
+        : /slow down|paused|cap/.test(e.message) ? { state: "blocked", status: null, note: "LinkedIn rate limit; open it to confirm it's still open", checked_at: now() }
+        : await checkPosting(input.url);
+    }
+  } else chk = await checkPosting(input.url);
+  if (!details && chk.state === "live" && !text(input.requirements)) details = await jobDetails(input.url).catch(() => null);
+  if (details) {
+    // LinkedIn's public search ignores its remote filter, so the description is the evidence.
+    const remote = /\b(fully |100% )?remote\b/i.test(details.description ?? "") ? (/\bhybrid\b/i.test(details.description) ? "hybrid/remote (see description)" : "remote (stated in description)") : null;
+    input = { ...input, work_mode: input.work_mode && input.work_mode !== "unknown" ? input.work_mode : remote ?? "not stated in description", salary_text: input.salary_text || details.salary || null,
+      requirements: text(input.requirements) || [details.criteria?.length ? details.criteria.join(" · ") : null, details.applicants, details.description].filter(Boolean).join("\n") };
+  }
+  // Checked again after the network calls above: another call may have recorded it meanwhile.
+  const late = db.prepare("SELECT id, status, link_state FROM jobs WHERE client_id = ? AND (url_canon = ? OR (lower(company) = lower(?) AND lower(title) = lower(?)))").get(c.id, canon, input.company.trim(), input.title.trim());
+  if (late) return { job_id: late.id, duplicate: true, status: late.status, link_state: late.link_state, note: "Already recorded for this client; not added again." };
   const id = uid();
   db.prepare(`INSERT INTO jobs (id, client_id, title, company, url, url_canon, location, work_mode, posted_date, salary_text, requirements, source,
     status, link_state, link_status, link_note, link_checked_at, found_by, task_id, created_at, updated_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
     .run(id, c.id, input.title.trim(), input.company.trim(), input.url.trim(), canon, text(input.location), text(input.work_mode), text(input.posted_date),
-      text(input.salary_text), text(input.requirements)?.slice(0, 4000) ?? null, text(input.source), ["dead", "closed"].includes(chk.state) ? "closed" : "found",
+      text(input.salary_text), text(input.requirements)?.slice(0, 6000) ?? null, text(input.source), ["dead", "closed"].includes(chk.state) ? "closed" : "found",
       chk.state, chk.status, chk.note ?? null, chk.checked_at, agent_id, task_id, now(), now());
   broadcast({ type: "jobs_changed" });
   return { job_id: id, duplicate: false, link_state: chk.state, link_note: chk.note ?? null,
@@ -191,7 +217,7 @@ setOutputValidator((task, output) => {
       const j = jobs.get(id);
       if (!j) return `unknown job ${id}`;
       if (task.input?.client_id && j.client_id !== task.input.client_id) return `${j.title} at ${j.company} belongs to another client`;
-      if (j.status !== "shortlisted") return `${j.title} at ${j.company} is ${j.status}, not shortlisted (score it with score_job)`;
+      if (j.status !== "shortlisted") return `${j.title} at ${j.company} is ${j.status}, not shortlisted (score it with score_jobs)`;
     }
     return null;
   }
@@ -200,7 +226,7 @@ setOutputValidator((task, output) => {
       const j = jobs.get(id);
       if (!j) continue;
       if (j.status === "skipped") continue; // the writer may drop a job, with a reason, via score_job
-      if (!j.application) return `no application pack for ${j.title} at ${j.company} (save_application, or score_job with decision skipped and a reason)`;
+      if (!j.application) return `no application pack for ${j.title} at ${j.company} (save_applications, or score_jobs with decision skipped and a reason)`;
       if (!j.application.checks.no_placeholders) return `the cover note for ${j.title} at ${j.company} still has [placeholders]`;
     }
     return null;
@@ -208,12 +234,73 @@ setOutputValidator((task, output) => {
   return null;
 });
 
+// ---------- Bulk operations (one tool call for many jobs keeps runs inside the tool limit) ----------
+async function pool(items, n, fn) {
+  const out = new Array(items.length); let next = 0;
+  await Promise.all(Array.from({ length: Math.min(n, items.length) }, async () => { while (next < items.length) { const k = next++; out[k] = await fn(items[k], k); } }));
+  return out;
+}
+export async function addJobs(clientId, items, ctx = {}) {
+  if (!Array.isArray(items) || !items.length) throw new Error("jobs must be a non-empty list");
+  // The same posting twice in one call is recorded once (they'd otherwise race past the duplicate check).
+  const firstOf = new Map();
+  const keyOf = (it) => [canonicalJobUrl(it.url), `${String(it.company ?? "").toLowerCase().trim()}|${String(it.title ?? "").toLowerCase().trim()}`];
+  items.slice(0, 40).forEach((it, k) => { for (const key of keyOf(it)) if (key && !firstOf.has(key)) firstOf.set(key, k); });
+  return pool(items.slice(0, 40), 4, async (it, k) => {
+    if (keyOf(it).some((key) => key && firstOf.get(key) !== k)) return { title: it.title, company: it.company, duplicate: true, link_state: "duplicate in this list" };
+    try {
+      const r = await addJob({ ...it, client_id: clientId }, ctx);
+      if (!r.duplicate && it.fit_score != null && it.decision) {
+        try { const j = scoreJob(r.job_id, it, ctx); return { ...r, status: j.status, fit_score: j.fit_score }; }
+        catch (e) { return { ...r, score_error: e.message }; }
+      }
+      return r;
+    } catch (e) { return { title: it.title, company: it.company, error: e.message }; }
+  });
+}
+export function scoreJobs(items, ctx = {}) {
+  return (items ?? []).slice(0, 60).map((it) => {
+    try { const j = scoreJob(it.job_id, it, ctx); return { job_id: j.id, status: j.status, fit_score: j.fit_score }; }
+    catch (e) { return { job_id: it.job_id, error: e.message }; }
+  });
+}
+export function saveApplications(items, ctx = {}) {
+  return (items ?? []).slice(0, 40).map((it) => {
+    try { return saveApplication(it.job_id, it, ctx); } catch (e) { return { job_id: it.job_id, error: e.message }; }
+  });
+}
+// For search: has this client already got this posting (any status)?
+export function knownFor(clientId) {
+  const rows = db.prepare("SELECT url_canon, lower(company) AS c, lower(title) AS t FROM jobs WHERE client_id = ?").all(clientId);
+  const urls = new Set(rows.map((r) => r.url_canon)); const pairs = new Set(rows.map((r) => `${r.c}|${r.t}`));
+  return (j) => urls.has(canonicalJobUrl(j.url)) || pairs.has(`${String(j.company).toLowerCase().trim()}|${String(j.title).toLowerCase().trim()}`);
+}
+
+// ---------- How to source (given to the sourcing step with every client search) ----------
+export const SOURCING_PLAYBOOK = `JOB SOURCING PLAYBOOK (follow it; it's how a strong human sourcer finds 20+ real roles a day)
+1. Read the CLIENT PROFILE. Write down: titles, level, locations, work mode, salary floor, must-haves, exclusions, industries, target companies, and from the resume: past employers, industries, core skills.
+2. Build a title list of 5-8 real variants, e.g. "Director of Operations" → "Operations Director", "Head of Operations", "Senior Director Operations", "Director, Business Operations", "VP Operations" (only if the level fits). Add industry-specific names the resume suggests. Never drift to a different job family.
+3. Search wide with search_jobs (it queries LinkedIn's public listings, company boards and remote boards directly; one call covers several titles and locations):
+   - First pass: all title variants × each client location, days 7, levels matching the client (mid_senior/director/executive), work_modes from the profile.
+   - If remote is OK, include "remote" in work_modes and the country (e.g. "United States", "Canada") as a location; remote boards are searched automatically. LinkedIn's public search can't filter remote: its results include on-site jobs, so check each job's work_mode (taken from the description) before shortlisting a remote-only client.
+   - Company sweep: pass target companies, the client's past employers' competitors and peers you know of, and companies that appeared in good results, in companies (plain names are tried on Greenhouse, Lever and Ashby; "lever:slug" or a careers URL is exact). Direct company links beat aggregator links.
+   - Not enough? Widen in this order: days 14, then 30; more title variants; nearby cities/metros; strict_titles false (then filter by hand).
+4. Triage from the result lines before adding: drop wrong level, wrong location, excluded companies/industries, staffing/recruiting agencies (unless the client allows), posted salary clearly under the floor, and duplicates of the same role.
+5. add_jobs with every plausible fit (up to ~1.5x the target) in one call. The system checks each link and pulls the full description into requirements. Closed or dead links can't be shortlisted.
+6. Read requirements with find_jobs (with_details true), then score_jobs in one call. Rubric (100): title & level fit 30, must-haves & core skills 25, location & work mode 20, industry/domain 15, salary 10 (not posted = 5). Shortlist at 65+; skip the rest with a reason. Reasons quote the profile and the posting; gaps are honest.
+7. Signals that raise priority: posted in the last 3 days, "Be among the first 25 applicants", direct company/ATS link, salary posted at or above the floor.
+8. Indeed, Glassdoor and hiring.cafe block automated access. Use them only through your browser tab like a normal visitor; if a "verify you are human" page appears, stop using that site and note it. Never try to get around a bot check.
+9. Repeat 3-6 until you hit the TARGET or have genuinely exhausted the methods above. Then submit_output with job_ids (shortlisted only) and a short coverage report in data: searches run, results per source, how many dropped and why, and what would find more.
+Never invent a posting, company, salary or link: only use URLs that search_jobs, your browser or a page you opened returned.`;
+
 // ---------- Default workflow ----------
+export const OLD_SOURCE_START = "Find real, currently open job postings that match the CLIENT PROFILE in your brief";
+export const OLD_TAILOR_START = "For each shortlisted job, write an application pack with save_application";
+export const SOURCE_INSTRUCTIONS = "Find real, open job postings for the client in your brief, following the JOB SOURCING PLAYBOOK. Use search_jobs for the searches, add_jobs to record candidates in bulk, find_jobs (with_details) to read requirements, and score_jobs to shortlist or skip in bulk. Put shortlisted job IDs in job_ids and the coverage report in data.";
+export const TAILOR_INSTRUCTIONS = "Write an application pack for every shortlisted job, using save_applications (several at once): a cover note under 180 words that names the company and connects 2-3 specific requirements from the posting (they're in the job's requirements) to real experience in the client's resume; resume_tweaks (bullets to emphasize or reword, only experience the resume shows); screening_answers if the posting lists questions. Never invent experience, employers, numbers or credentials: if the resume lacks something the job needs, say so in owner_notes. If a job is clearly a poor fit after reading it, use score_jobs with decision skipped and the reason. Nothing is submitted. Put the job IDs in job_ids.";
 export function jobSearchSteps(ids) {
   return [
-    { key: "source", title: "Find & verify matching jobs", agent_id: ids.scout, depends_on: [], validate: "jobs_shortlisted",
-      instructions: "Find real, currently open job postings that match the CLIENT PROFILE in your brief: target titles, seniority, location/work mode, salary floor, must-haves and exclusions. Search job boards (LinkedIn Jobs, Indeed, Glassdoor, Wellfound), company career pages and ATS sites (Greenhouse, Lever, Workday, Ashby). Prefer postings from the last 14 days and direct company/ATS links over aggregators. Record each candidate with add_job (the system loads the link and tells you if it's closed). Then score every one with score_job: shortlist only real fits, with reasons tied to the profile and honest gaps; skip the rest with a reason. Put shortlisted job IDs in job_ids. Never invent a posting, company, salary or link." },
-    { key: "tailor", title: "Prepare application packs", agent_id: ids.zara, depends_on: ["source"], condition: { type: "deps_list_nonempty", field: "job_ids" }, validate: "applications_ready",
-      instructions: "For each shortlisted job, write an application pack with save_application: a short cover note (under 180 words) that names the company and connects 2-3 specific requirements from the posting to real experience in the client's resume; resume_tweaks (bullets to emphasize or reword, using only experience the resume shows); and screening_answers if the posting lists questions. Never invent experience, employers, numbers or credentials: if the resume lacks something the job needs, say so in owner_notes. If a job turns out to be a poor fit, use score_job with decision skipped and the reason. Nothing is submitted. Put the job IDs in job_ids." },
+    { key: "source", title: "Find & verify matching jobs", agent_id: ids.scout, depends_on: [], validate: "jobs_shortlisted", instructions: SOURCE_INSTRUCTIONS },
+    { key: "tailor", title: "Prepare application packs", agent_id: ids.zara, depends_on: ["source"], condition: { type: "deps_list_nonempty", field: "job_ids" }, validate: "applications_ready", instructions: TAILOR_INSTRUCTIONS },
   ];
 }

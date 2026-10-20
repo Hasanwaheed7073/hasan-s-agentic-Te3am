@@ -6,7 +6,9 @@ import { providers, chatCompletion, costFor, ProviderError } from "./providers.j
 const MAX_STEPS = Number(process.env.MAX_STEPS_PER_TURN ?? 60);
 const MAX_TOOL_RESULT = 12_000; // keeps long pages from exhausting smaller context windows
 
-export const OPENAI_ENGINE_NOTE = `You have no built-in web search. To search, call fetch_url with https://html.duckduckgo.com/html/?q=<your query> (URL-encoded), then fetch_url the result pages you need. Use browser tools for sites that need a login or clicking. Call tools with valid JSON arguments only.`;
+// Search engines (DuckDuckGo, Bing and others) answer automated requests with bot checks, so this
+// engine has no general web search: job searches go through search_jobs, known pages through fetch_url.
+export const OPENAI_ENGINE_NOTE = `You have no general web search. For job openings use search_jobs. Use fetch_url for pages whose URL you already have, and browser tools for sites that need a login or clicking. Call tools with valid JSON arguments only.`;
 
 function resultText(out) {
   if (Array.isArray(out)) {

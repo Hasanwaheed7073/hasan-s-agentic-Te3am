@@ -49,14 +49,26 @@ The **Campaign** page is the single source of truth for brand, sender, target, a
 
 **Clients** → add a client with a label (e.g. *Client A*), target titles, locations, work mode, seniority, salary floor, must-haves, exclusions and their resume as plain text. The full name is optional and stays with you; agents only see the label. **Find jobs** asks how many matches to aim for and runs *Client job search*:
 
-- **Scout** searches job boards, company career pages and ATS sites, records each posting with `add_job` and scores it with `score_job`. The system loads every link itself: *live*, *closed* (the page says it's no longer accepting applications), *dead* (404) or *check link yourself* (the site blocks automated checks). Closed and dead postings can't be shortlisted. The same link, or the same company and title, is never added twice for a client.
-- **Zara** writes an application pack per shortlisted job: a cover note naming the company, resume tweaks and screening answers, using only experience in the resume. Gaps go to *owner notes*.
+- **Scout** follows a sourcing playbook (title variants, location and company sweeps, widening rules, a 100-point fit rubric). Its `search_jobs` tool queries the sources directly, with no search engine in between: **LinkedIn's public job listings** (logged out, one request every 4-6 s, at most 14 per search and 400 a day), **company job boards** on Greenhouse, Lever, Ashby and SmartRecruiters (from the client's *Target companies* and companies Scout picks), and **remote boards** with public feeds (Remotive, Himalayas, Jobicy, RemoteOK). Results are filtered by title words, date and exclusions, and jobs the client already has are removed. `add_jobs` records many at once and pulls each full description; `score_jobs` shortlists or skips many at once. The system loads every link itself: *live*, *closed* (the page says it's no longer accepting applications), *dead* (404) or *check link yourself* (the site blocks automated checks). Closed and dead postings can't be shortlisted. The same link, or the same company and title, is never added twice for a client.
+- Indeed, Glassdoor and hiring.cafe block automated access (bot checks). Scout may open them in its browser tab like a normal visitor and stops if a verification page appears; the app never tries to get around one.
+- LinkedIn's public search ignores its remote filter, so remote status comes from each job's description (*work mode* on the job).
+- **Search daily** on a client schedules the search every weekday at the hour you choose, with a daily target. Turn off LinkedIn or other sources with `JOB_SOURCES_DISABLED=linkedin` (or `companies`, `remote_boards`) in `.env`; change the LinkedIn daily cap with `LINKEDIN_DAILY_REQUESTS`. Automated access to LinkedIn is against LinkedIn's User Agreement even when logged out; the pacing keeps volume close to manual sourcing, and no account is used.
+- **Zara** writes application packs for all shortlisted jobs (several per call): a cover note naming the company, resume tweaks and screening answers, using only experience in the resume. Gaps go to *owner notes*.
 - **Nothing is submitted.** You apply, then click **I applied** (then Interview / Offer / Rejected) to track it.
 
 ## Targets and handoffs
 
 - Campaign and job-search runs take a **target** (e.g. 5 verified agencies, 10 jobs). The first step keeps searching until it reaches the target or genuinely runs out of options, then reports how many and why it fell short.
 - Downstream steps work on every record handed to them. Caveats from upstream ("confirm this title first") go into the draft's **owner notes**, shown in yellow on the draft, instead of stopping the workflow. You still approve everything before it goes out.
+
+## Use your own Chrome (fewer bot checks)
+
+By default the team browser is a Chrome window launched by the automation library, which Chrome marks as automated, and sites can see that. **My Chrome (connected)** instead uses a normal Chrome that you start yourself:
+
+1. Double-click **`start-team-chrome.bat`**. A Chrome window opens with its own profile (`%LOCALAPPDATA%HasansTeamChrome`). Chrome doesn't allow connections to your default profile, so this is a separate profile, but it's a regular browser: sign in to Google, LinkedIn, Indeed and others there once, and browse in it yourself as normal.
+2. In **Browser & accounts**, set *Engine* to **My Chrome (connected)**.
+
+Members then open their own tabs in that window and never touch yours. **Close** in the app closes only the team's tabs. If a site still shows a "verify you're human" check, solve it yourself in that window; the app doesn't try to get around checks. While this Chrome is open, programs on this PC can control it (the port only accepts connections from this PC), so close it when the team isn't working. A different address can be set with `TEAM_CHROME_URL`.
 
 ## Custom AI providers (Groq and other OpenAI-compatible APIs)
 

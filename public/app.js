@@ -600,7 +600,7 @@ async function openPage(page) {
 
   if (page === "browser") {
     const [b, accounts, rules] = await Promise.all([api("/browser"), api("/accounts"), api("/site-rules")]);
-    const engineName = { chrome: "Google Chrome", chromium: "Chromium" };
+    const engineName = { own: "My Chrome (connected)", chrome: "Google Chrome", chromium: "Chromium" };
     const accStatus = (a) => {
       if (!a.status.known) return `<span class="pill muted">Open the browser to check</span>`;
       if (a.status.signedIn === true) return `<span class="pill good">● Signed in</span>`;
@@ -620,8 +620,8 @@ async function openPage(page) {
       <div class="card">
         <div class="row" style="align-items:center">
           <div class="grow"><h3>Team browser ${b.running ? '<span class="pill good">● Open</span>' : '<span class="pill muted">Closed</span>'}</h3>
-            <div class="sub">${engineName[b.engine]} with its own profile, separate from your everyday Chrome. Each member works in their own tab; logins are saved.</div></div>
-          <label style="width:170px;margin:0">Engine<select id="engine">${Object.entries(engineName).map(([v, l]) => `<option value="${v}" ${b.preferred === v ? "selected" : ""}>${l}</option>`).join("")}</select></label>
+            <div class="sub">${b.engine === "own" ? "Your team Chrome, started with <b>start-team-chrome.bat</b>. It's a normal Chrome you can browse in yourself; members open their own tabs in it and never touch yours. If a site shows a human check, solve it there yourself." : `${engineName[b.engine]} with its own profile, separate from your everyday Chrome. Each member works in their own tab; logins are saved.`}</div></div>
+          <label style="width:210px;margin:0">Engine<select id="engine">${Object.entries(engineName).map(([v, l]) => `<option value="${v}" ${b.preferred === v ? "selected" : ""}>${l}</option>`).join("")}</select></label>
           <button class="btn-blue" id="br-open">${b.running ? "Show window" : "Open browser"}</button>
           ${b.running ? `<button class="btn-grey" id="br-close">Close</button>` : ""}
         </div>

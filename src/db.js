@@ -140,6 +140,7 @@ for (const sql of [
   "ALTER TABLE actions ADD COLUMN origin TEXT NOT NULL DEFAULT 'agent'",
   "ALTER TABLE actions ADD COLUMN campaign_id TEXT",
   "ALTER TABLE actions ADD COLUMN owner_notes TEXT",
+  "ALTER TABLE clients ADD COLUMN target_companies TEXT NOT NULL DEFAULT '[]'",
   "ALTER TABLE threads ADD COLUMN config TEXT",
   "ALTER TABLE threads ADD COLUMN context_hash TEXT",
   "ALTER TABLE tasks ADD COLUMN input TEXT",

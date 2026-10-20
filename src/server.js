@@ -18,7 +18,7 @@ import * as conn from "./connections.js";
 import * as prov from "./providers.js";
 import * as camp from "./campaigns.js";
 import * as jobsMod from "./jobs.js";
-import { applyResultsUpgrade } from "./upgrades.js";
+import { applyResultsUpgrade, applyJobSourcingUpgrade } from "./upgrades.js";
 import { listActivity, usageSummary, setLimits, getLimits, logActivity } from "./activity.js";
 import {
   closeBrowser, openBrowser, browserStatus, tabTitle, tabPreview, bringToFront, openOwnerTab, clearCookiesFor, getEngine,
@@ -34,6 +34,7 @@ upgradeTeam();
 wf.seedDefaultWorkflows();
 camp.seedZeeCampaign();
 applyResultsUpgrade();
+applyJobSourcingUpgrade();
 sched.migrateLegacySchedules();
 act.expireStaleInteractive();
 queue.startWorker();
@@ -291,7 +292,8 @@ app.get("/api/clients/:id", h((req) => {
   const c = jobsMod.clients.get(req.params.id);
   if (!c) throw new Error("No such client");
   const run = activeSearch(c.id);
-  return { client: c, jobs: jobsMod.jobs.list({ client_id: c.id }), active_run: run ?? null, workflow_id: jobWorkflow()?.id ?? null };
+  const schedule = db.prepare("SELECT id, cron, timezone, enabled, next_run_at, input FROM schedules WHERE target_type = 'workflow' AND workflow_id = ? AND json_extract(input, '$.client_id') = ?").get(jobWorkflow()?.id ?? "", c.id);
+  return { client: c, jobs: jobsMod.jobs.list({ client_id: c.id }), active_run: run ?? null, workflow_id: jobWorkflow()?.id ?? null, schedule: schedule ? { ...schedule, input: JSON.parse(schedule.input ?? "{}") } : null };
 }));
 app.post("/api/clients/:id/search", h((req) => {
   const c = jobsMod.clients.get(req.params.id);
@@ -302,6 +304,20 @@ app.post("/api/clients/:id/search", h((req) => {
   if (activeSearch(c.id)) throw new Error("A search for this client is already running.");
   const target = Math.min(30, Math.max(1, Number(req.body?.target_count) || 10));
   return wf.runWorkflow(w.id, { client_id: c.id, client: c.label, target_count: target }, { actor: "owner" });
+}));
+// Daily search: one schedule per client (weekdays at the chosen hour, this PC's time zone by default).
+app.post("/api/clients/:id/schedule", h((req) => {
+  const c = jobsMod.clients.get(req.params.id);
+  if (!c) throw new Error("No such client");
+  const w = jobWorkflow();
+  if (!w) throw new Error('No "Client job search" workflow.');
+  const old = db.prepare("SELECT id FROM schedules WHERE target_type = 'workflow' AND workflow_id = ? AND json_extract(input, '$.client_id') = ?").get(w.id, c.id);
+  if (old) sched.deleteSchedule(old.id);
+  if (req.body?.off) return { ok: true };
+  const hour = Math.min(23, Math.max(0, Number(req.body?.hour ?? 8)));
+  const target = Math.min(30, Math.max(1, Number(req.body?.target_count) || 20));
+  return sched.createSchedule({ name: `Daily job search: ${c.label}`, cron: `0 ${hour} * * ${req.body?.weekends ? "*" : "1-5"}`, timezone: req.body?.timezone || undefined,
+    target_type: "workflow", workflow_id: w.id, input: { client_id: c.id, client: c.label, target_count: target }, overlap_policy: "skip", missed_policy: "run_once" });
 }));
 app.put("/api/jobs/:id/status", h((req) => jobsMod.setJobStatus(req.params.id, req.body.status, { note: req.body.note })));
 app.post("/api/jobs/:id/recheck", h((req) => jobsMod.recheckJob(req.params.id)));
@@ -372,7 +388,7 @@ app.post("/api/browser/close", async (_req, res) => {
   res.json({ ok: true });
 });
 app.put("/api/browser/engine", async (req, res) => {
-  if (!["chrome", "chromium"].includes(req.body.engine)) return res.status(400).end();
+  if (!["chrome", "chromium", "own"].includes(req.body.engine)) return res.status(400).end();
   settings.set("browser_engine", req.body.engine);
   await closeBrowser(); // relaunches with the new engine on next use
   res.json({ ok: true });
